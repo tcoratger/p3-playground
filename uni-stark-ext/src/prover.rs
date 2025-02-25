@@ -5,17 +5,35 @@ use itertools::{Itertools, izip};
 use p3_air::Air;
 use p3_challenger::{CanObserve, CanSample, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
-use p3_field::{BasedVectorSpace, PackedValue, PrimeCharacteristicRing};
+use p3_field::{BasedVectorSpace, Field, PackedValue, PrimeCharacteristicRing};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
-use p3_util::{log2_ceil_usize, log2_strict_usize};
+use p3_util::log2_strict_usize;
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{
     Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProverConstraintFolder,
-    StarkGenericConfig, SymbolicAirBuilder, SymbolicExpression, Val, get_symbolic_constraints,
+    StarkGenericConfig, SymbolicAirBuilder, Val, VerifierInput,
 };
+
+#[derive(Clone, Debug)]
+pub struct ProverInput<Val, A> {
+    inner: VerifierInput<Val, A>,
+    main_trace: RowMajorMatrix<Val>,
+}
+
+impl<Val: Field, A> ProverInput<Val, A> {
+    pub fn new(air: A, public_values: Vec<Val>, main_trace: RowMajorMatrix<Val>) -> Self
+    where
+        A: Air<SymbolicAirBuilder<Val>>,
+    {
+        Self {
+            inner: VerifierInput::new(air, public_values),
+            main_trace,
+        }
+    }
+}
 
 #[instrument(skip_all)]
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
@@ -25,102 +43,136 @@ pub fn prove<
     #[cfg(not(debug_assertions))] A,
 >(
     config: &SC,
-    air: &A,
+    inputs: Vec<ProverInput<Val<SC>, A>>,
     challenger: &mut SC::Challenger,
-    trace: RowMajorMatrix<Val<SC>>,
-    public_values: &Vec<Val<SC>>,
 ) -> Proof<SC>
 where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
 {
     #[cfg(debug_assertions)]
-    crate::check_constraints::check_constraints(air, &trace, public_values);
+    inputs.iter().for_each(|input| {
+        crate::check_constraints::check_constraints(
+            &input.inner.air,
+            &input.main_trace,
+            &input.inner.public_values,
+        )
+    });
 
-    let degree = trace.height();
-    let log_degree = log2_strict_usize(degree);
-
-    let symbolic_constraints = get_symbolic_constraints::<Val<SC>, A>(air, 0, public_values.len());
-    let constraint_count = symbolic_constraints.len();
-    let constraint_degree = symbolic_constraints
-        .iter()
-        .map(SymbolicExpression::degree_multiple)
-        .max()
-        .unwrap_or(0);
-    let log_quotient_degree = log2_ceil_usize(constraint_degree - 1);
-    let quotient_degree = 1 << log_quotient_degree;
+    let (inputs, main_traces, log_degrees) = inputs
+        .into_iter()
+        .map(|input| {
+            let log_degree = log2_strict_usize(input.main_trace.height());
+            (input.inner, input.main_trace, log_degree)
+        })
+        .collect::<(Vec<_>, Vec<_>, Vec<_>)>();
 
     let pcs = config.pcs();
-    let trace_domain = pcs.natural_domain_for_degree(degree);
+    let (main_domains, quotient_domains) = izip!(&inputs, &log_degrees)
+        .map(|(input, log_degree)| {
+            let main_domain = pcs.natural_domain_for_degree(1 << log_degree);
+            let quotient_domain =
+                main_domain.create_disjoint_domain(1 << (log_degree + input.log_quotient_degree));
+            (main_domain, quotient_domain)
+        })
+        .collect::<(Vec<_>, Vec<_>)>();
 
-    let (trace_commit, trace_data) =
-        info_span!("commit to trace data").in_scope(|| pcs.commit(vec![(trace_domain, trace)]));
+    let (main_commit, main_data) = info_span!("commit to main data")
+        .in_scope(|| pcs.commit(izip!(main_domains.iter().copied(), main_traces).collect()));
 
     // Observe the instance.
     // degree < 2^255 so we can safely cast log_degree to a u8.
-    challenger.observe(Val::<SC>::from_u8(log_degree as u8));
+    log_degrees
+        .iter()
+        .for_each(|log_degree| challenger.observe(Val::<SC>::from_u8(*log_degree as u8)));
     // TODO: Might be best practice to include other instance data here; see verifier comment.
 
-    challenger.observe(trace_commit.clone());
-    challenger.observe_slice(public_values);
+    challenger.observe(main_commit.clone());
+    inputs
+        .iter()
+        .for_each(|input| challenger.observe_slice(&input.public_values));
     let alpha: SC::Challenge = challenger.sample_algebra_element();
 
-    let quotient_domain =
-        trace_domain.create_disjoint_domain(1 << (log_degree + log_quotient_degree));
+    let max_constraint_count =
+        itertools::max(inputs.iter().map(|input| input.constraint_count)).unwrap_or_default();
+    let mut alpha_powers = alpha.powers().take(max_constraint_count).collect_vec();
+    alpha_powers.reverse();
 
-    let trace_on_quotient_domain = pcs.get_evaluations_on_domain(&trace_data, 0, quotient_domain);
+    let quotient_values = izip!(&inputs, &main_domains, &quotient_domains)
+        .map(|(input, main_domain, quotient_domain)| {
+            let main_trace_on_quotient_domain =
+                pcs.get_evaluations_on_domain(&main_data, 0, *quotient_domain);
+            quotient_values(
+                &input.air,
+                &input.public_values,
+                *main_domain,
+                *quotient_domain,
+                main_trace_on_quotient_domain,
+                &alpha_powers[max_constraint_count - input.constraint_count..],
+            )
+        })
+        .collect::<Vec<_>>();
 
-    let quotient_values = quotient_values(
-        air,
-        public_values,
-        trace_domain,
-        quotient_domain,
-        trace_on_quotient_domain,
-        alpha,
-        constraint_count,
-    );
-    let quotient_flat = RowMajorMatrix::new_col(quotient_values).flatten_to_base();
-    let quotient_chunks = quotient_domain.split_evals(quotient_degree, quotient_flat);
-    let qc_domains = quotient_domain.split_domains(quotient_degree);
+    let quotient_chunks = izip!(&inputs, &quotient_domains, quotient_values)
+        .flat_map(|(input, quotient_domain, quotient_values)| {
+            let quotient_flat = RowMajorMatrix::new_col(quotient_values).flatten_to_base();
+            let quotient_chunks =
+                quotient_domain.split_evals(input.quotient_degree(), quotient_flat);
+            let qc_domains = quotient_domain.split_domains(input.quotient_degree());
+            izip!(qc_domains, quotient_chunks)
+        })
+        .collect();
 
-    let (quotient_commit, quotient_data) = info_span!("commit to quotient poly chunks")
-        .in_scope(|| pcs.commit(izip!(qc_domains, quotient_chunks).collect_vec()));
+    let (quotient_commit, quotient_data) =
+        info_span!("commit to quotient poly chunks").in_scope(|| pcs.commit(quotient_chunks));
     challenger.observe(quotient_commit.clone());
 
     let commitments = Commitments {
-        trace: trace_commit,
+        main: main_commit,
         quotient_chunks: quotient_commit,
     };
 
     let zeta: SC::Challenge = challenger.sample();
-    let zeta_next = trace_domain.next_point(zeta).unwrap();
 
     let (opened_values, opening_proof) = info_span!("open").in_scope(|| {
         pcs.open(
             vec![
-                (&trace_data, vec![vec![zeta, zeta_next]]),
+                (
+                    &main_data,
+                    log_degrees
+                        .iter()
+                        .map(|log_degree| {
+                            let main_domain = pcs.natural_domain_for_degree(1 << log_degree);
+                            let zeta_next = main_domain.next_point(zeta).unwrap();
+                            vec![zeta, zeta_next]
+                        })
+                        .collect(),
+                ),
                 (
                     &quotient_data,
                     // open every chunk at zeta
-                    (0..quotient_degree).map(|_| vec![zeta]).collect_vec(),
+                    vec![vec![zeta]; inputs.iter().map(VerifierInput::quotient_degree).sum()],
                 ),
             ],
             challenger,
         )
     });
-    let trace_local = opened_values[0][0][0].clone();
-    let trace_next = opened_values[0][0][1].clone();
-    let quotient_chunks = opened_values[1].iter().map(|v| v[0].clone()).collect_vec();
-    let opened_values = OpenedValues {
-        trace_local,
-        trace_next,
-        quotient_chunks,
-    };
+    let mut quotient_chunks = opened_values[1].iter().map(|v| v[0].clone());
+    let opened_values = izip!(&inputs, &opened_values[0])
+        .map(|(input, main)| OpenedValues {
+            main_local: main[0].clone(),
+            main_next: main[1].clone(),
+            quotient_chunks: quotient_chunks
+                .by_ref()
+                .take(input.quotient_degree())
+                .collect_vec(),
+        })
+        .collect_vec();
     Proof {
         commitments,
         opened_values,
         opening_proof,
-        degree_bits: log_degree,
+        log_degrees,
     }
 }
 
@@ -128,11 +180,10 @@ where
 fn quotient_values<SC, A, Mat>(
     air: &A,
     public_values: &Vec<Val<SC>>,
-    trace_domain: Domain<SC>,
+    main_domain: Domain<SC>,
     quotient_domain: Domain<SC>,
-    trace_on_quotient_domain: Mat,
-    alpha: SC::Challenge,
-    constraint_count: usize,
+    main_trace_on_quotient_domain: Mat,
+    alpha_powers: &[SC::Challenge],
 ) -> Vec<SC::Challenge>
 where
     SC: StarkGenericConfig,
@@ -140,11 +191,11 @@ where
     Mat: Matrix<Val<SC>> + Sync,
 {
     let quotient_size = quotient_domain.size();
-    let width = trace_on_quotient_domain.width();
+    let width = main_trace_on_quotient_domain.width();
     let mut sels = debug_span!("Compute Selectors")
-        .in_scope(|| trace_domain.selectors_on_coset(quotient_domain));
+        .in_scope(|| main_domain.selectors_on_coset(quotient_domain));
 
-    let qdb = log2_strict_usize(quotient_domain.size()) - log2_strict_usize(trace_domain.size());
+    let qdb = log2_strict_usize(quotient_domain.size()) - log2_strict_usize(main_domain.size());
     let next_step = 1 << qdb;
 
     // We take PackedVal::<SC>::WIDTH worth of values at a time from a quotient_size slice, so we need to
@@ -155,9 +206,6 @@ where
         sels.is_transition.push(Val::<SC>::default());
         sels.inv_vanishing.push(Val::<SC>::default());
     }
-
-    let mut alpha_powers = alpha.powers().take(constraint_count).collect_vec();
-    alpha_powers.reverse();
 
     (0..quotient_size)
         .into_par_iter()
@@ -171,7 +219,7 @@ where
             let inv_vanishing = *PackedVal::<SC>::from_slice(&sels.inv_vanishing[i_range]);
 
             let main = RowMajorMatrix::new(
-                trace_on_quotient_domain.vertically_packed_row_pair(i_start, next_step),
+                main_trace_on_quotient_domain.vertically_packed_row_pair(i_start, next_step),
                 width,
             );
 
@@ -182,7 +230,7 @@ where
                 is_first_row,
                 is_last_row,
                 is_transition,
-                alpha_powers: &alpha_powers,
+                alpha_powers,
                 accumulator,
                 constraint_index: 0,
             };

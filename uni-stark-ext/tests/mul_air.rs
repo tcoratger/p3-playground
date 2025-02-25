@@ -20,7 +20,9 @@ use p3_mersenne_31::Mersenne31;
 use p3_symmetric::{
     CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher32, TruncatedPermutation,
 };
-use p3_uni_stark_ext::{StarkConfig, StarkGenericConfig, Val, prove, verify};
+use p3_uni_stark_ext::{
+    ProverInput, StarkConfig, StarkGenericConfig, Val, VerifierInput, prove, verify,
+};
 use rand::distr::{Distribution, StandardUniform};
 use rand::{Rng, rng};
 
@@ -35,6 +37,7 @@ In its basic form, asserts a^(self.degree-1) * b = c
 
 If `uses_transition_constraints`, checks that on transition rows, the first a = row number
 */
+#[derive(Clone, Copy)]
 pub struct MulAir {
     degree: u64,
     uses_boundary_constraints: bool,
@@ -125,7 +128,11 @@ where
     let trace = air.random_valid_trace(log_height, true);
 
     let mut p_challenger = challenger.clone();
-    let proof = prove(&config, &air, &mut p_challenger, trace, &vec![]);
+    let proof = prove(
+        &config,
+        vec![ProverInput::new(air, vec![], trace)],
+        &mut p_challenger,
+    );
 
     let serialized_proof = postcard::to_allocvec(&proof).expect("unable to serialize proof");
     tracing::debug!("serialized_proof len: {} bytes", serialized_proof.len());
@@ -136,10 +143,9 @@ where
     let mut v_challenger = challenger;
     verify(
         &config,
-        &air,
+        vec![VerifierInput::new(air, vec![])],
         &mut v_challenger,
         &deserialized_proof,
-        &vec![],
     )
 }
 

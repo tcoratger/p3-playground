@@ -12,7 +12,7 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-use p3_uni_stark_ext::{StarkConfig, prove, verify};
+use p3_uni_stark_ext::{ProverInput, StarkConfig, VerifierInput, prove, verify};
 use rand::rng;
 
 /// For testing the public values feature
@@ -125,9 +125,19 @@ fn test_public_value_impl(n: usize, x: u64) {
     let config = MyConfig::new(pcs);
     let mut challenger = Challenger::new(perm.clone());
     let pis = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u64(x)];
-    let proof = prove(&config, &FibonacciAir {}, &mut challenger, trace, &pis);
+    let proof = prove(
+        &config,
+        vec![ProverInput::new(FibonacciAir {}, pis.clone(), trace)],
+        &mut challenger,
+    );
     let mut challenger = Challenger::new(perm);
-    verify(&config, &FibonacciAir {}, &mut challenger, &proof, &pis).expect("verification failed");
+    verify(
+        &config,
+        vec![VerifierInput::new(FibonacciAir {}, pis)],
+        &mut challenger,
+        &proof,
+    )
+    .expect("verification failed");
 }
 
 #[test]
@@ -160,5 +170,9 @@ fn test_incorrect_public_value() {
         BabyBear::ONE,
         BabyBear::from_u32(123_123), // incorrect result
     ];
-    prove(&config, &FibonacciAir {}, &mut challenger, trace, &pis);
+    prove(
+        &config,
+        vec![ProverInput::new(FibonacciAir {}, pis.clone(), trace)],
+        &mut challenger,
+    );
 }
