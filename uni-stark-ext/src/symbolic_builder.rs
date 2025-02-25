@@ -39,7 +39,7 @@ pub fn get_max_constraint_degree<F, A>(
 ) -> usize
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>>,
+    A: Air<SymbolicAirBuilder<F>> + ?Sized,
 {
     get_symbolic_constraints(air, preprocessed_width, num_public_values)
         .iter()
@@ -56,7 +56,7 @@ pub fn get_symbolic_constraints<F, A>(
 ) -> Vec<SymbolicExpression<F>>
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>>,
+    A: Air<SymbolicAirBuilder<F>> + ?Sized,
 {
     let mut builder = SymbolicAirBuilder::new(preprocessed_width, air.width(), num_public_values);
     air.eval(&mut builder);
