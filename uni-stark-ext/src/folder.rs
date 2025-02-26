@@ -1,6 +1,9 @@
 use alloc::vec::Vec;
+use core::iter::{Skip, Take};
+use core::ops::{Deref, Range};
 
 use p3_air::{AirBuilder, AirBuilderWithPublicValues};
+use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::VerticalPair;
 
@@ -117,5 +120,121 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for VerifierConstraintFo
 
     fn public_values(&self) -> &[Self::F] {
         self.public_values
+    }
+}
+
+pub struct SubMatrixRowSlice<R> {
+    inner: R,
+    range: Range<usize>,
+}
+
+impl<R> SubMatrixRowSlice<R> {
+    #[inline]
+    pub const fn new(inner: R, range: Range<usize>) -> Self {
+        Self { inner, range }
+    }
+}
+
+impl<T, R: Deref<Target = [T]>> Deref for SubMatrixRowSlice<R> {
+    type Target = [T];
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.inner[self.range.clone()]
+    }
+}
+
+pub struct SubMatrix<M> {
+    inner: M,
+    range: Range<usize>,
+}
+
+impl<M> SubMatrix<M> {
+    #[inline]
+    pub const fn new(inner: M, range: Range<usize>) -> Self {
+        Self { inner, range }
+    }
+}
+
+impl<M: Matrix<T>, T: Send + Sync> Matrix<T> for SubMatrix<M> {
+    type Row<'a>
+        = Take<Skip<M::Row<'a>>>
+    where
+        Self: 'a;
+
+    #[inline]
+    fn row(&self, r: usize) -> Self::Row<'_> {
+        self.inner
+            .row(r)
+            .skip(self.range.start)
+            .take(self.range.end)
+    }
+
+    #[inline]
+    fn row_slice(&self, r: usize) -> impl Deref<Target = [T]> {
+        SubMatrixRowSlice::new(self.inner.row_slice(r), self.range.clone())
+    }
+
+    #[inline]
+    fn width(&self) -> usize {
+        self.range.len()
+    }
+
+    #[inline]
+    fn height(&self) -> usize {
+        self.inner.height()
+    }
+}
+
+pub struct SubAirBuilder<'a, AB> {
+    inner: &'a mut AB,
+    range: Range<usize>,
+}
+
+impl<'a, AB> SubAirBuilder<'a, AB> {
+    #[inline]
+    pub fn new(inner: &'a mut AB, range: Range<usize>) -> Self {
+        Self { inner, range }
+    }
+}
+
+impl<AB: AirBuilder> AirBuilder for SubAirBuilder<'_, AB> {
+    type F = AB::F;
+    type Expr = AB::Expr;
+    type Var = AB::Var;
+    type M = SubMatrix<AB::M>;
+
+    #[inline]
+    fn main(&self) -> Self::M {
+        SubMatrix::new(self.inner.main(), self.range.clone())
+    }
+
+    #[inline]
+    fn is_first_row(&self) -> Self::Expr {
+        self.inner.is_first_row()
+    }
+
+    #[inline]
+    fn is_last_row(&self) -> Self::Expr {
+        self.inner.is_last_row()
+    }
+
+    #[inline]
+    fn is_transition_window(&self, size: usize) -> Self::Expr {
+        self.inner.is_transition_window(size)
+    }
+
+    #[inline]
+    fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
+        self.inner.assert_zero(x)
+    }
+}
+
+impl<AB: AirBuilderWithPublicValues> AirBuilderWithPublicValues for SubAirBuilder<'_, AB> {
+    type PublicVar = AB::PublicVar;
+
+    #[inline]
+    fn public_values(&self) -> &[Self::PublicVar] {
+        self.inner.public_values()
     }
 }

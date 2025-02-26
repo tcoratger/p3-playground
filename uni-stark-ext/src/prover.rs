@@ -1,5 +1,6 @@
 use alloc::vec;
 use alloc::vec::Vec;
+use core::ops::Deref;
 
 use itertools::{Itertools, izip};
 use p3_air::Air;
@@ -21,6 +22,14 @@ use crate::{
 pub struct ProverInput<Val, A> {
     inner: VerifierInput<Val, A>,
     main_trace: RowMajorMatrix<Val>,
+}
+
+impl<Val, A> Deref for ProverInput<Val, A> {
+    type Target = VerifierInput<Val, A>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 impl<Val: Field, A> ProverInput<Val, A> {
@@ -99,9 +108,10 @@ where
     alpha_powers.reverse();
 
     let quotient_values = izip!(&inputs, &main_domains, &quotient_domains)
-        .map(|(input, main_domain, quotient_domain)| {
+        .enumerate()
+        .map(|(idx, (input, main_domain, quotient_domain))| {
             let main_trace_on_quotient_domain =
-                pcs.get_evaluations_on_domain(&main_data, 0, *quotient_domain);
+                pcs.get_evaluations_on_domain(&main_data, idx, *quotient_domain);
             quotient_values(
                 &input.air,
                 &input.public_values,
