@@ -18,7 +18,6 @@ pub struct MultiStarkProvingKey<SC: StarkGenericConfig> {
 
 /// A verifying key for a single STARK, corresponding to a single AIR matrix.
 #[derive(Clone)]
-#[repr(C)]
 pub struct StarkVerifyingKey<Val, Com> {
     /// Preprocessed verifier data (if applicable).
     pub preprocessed_data: Option<VerifierPrepData<Com>>,

@@ -14,7 +14,6 @@ use crate::{
 
 /// A verifying key for a single STARK instance.
 #[derive(Clone)]
-#[repr(C)]
 pub struct StarkVerifyingKey<Val, Com> {
     /// Preprocessed data for the verifier, if available.
     pub preprocessed_data: Option<VerifierPrepData<Com>>,
