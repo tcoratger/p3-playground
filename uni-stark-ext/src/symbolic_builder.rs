@@ -19,7 +19,7 @@ pub fn get_log_quotient_degree<F, A>(
 ) -> usize
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>>,
+    A: Air<SymbolicAirBuilder<F>> + ?Sized,
 {
     // We pad to at least degree 2, since a quotient argument doesn't make sense with smaller degrees.
     let constraint_degree =
@@ -68,7 +68,7 @@ where
 pub struct SymbolicAirBuilder<F: Field> {
     preprocessed: RowMajorMatrix<SymbolicVariable<F>>,
     main: RowMajorMatrix<SymbolicVariable<F>>,
-    public_values: Vec<SymbolicVariable<F>>,
+    pub(crate) public_values: Vec<SymbolicVariable<F>>,
     constraints: Vec<SymbolicExpression<F>>,
 }
 
