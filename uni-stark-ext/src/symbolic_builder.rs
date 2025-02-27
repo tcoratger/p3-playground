@@ -19,7 +19,7 @@ pub fn get_log_quotient_degree<F, A>(
 ) -> usize
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>> + ?Sized,
+    A: Air<SymbolicAirBuilder<F>>,
 {
     // We pad to at least degree 2, since a quotient argument doesn't make sense with smaller degrees.
     let constraint_degree =
@@ -39,7 +39,7 @@ pub fn get_max_constraint_degree<F, A>(
 ) -> usize
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>> + ?Sized,
+    A: Air<SymbolicAirBuilder<F>>,
 {
     get_symbolic_constraints(air, preprocessed_width, num_public_values)
         .iter()
@@ -56,7 +56,7 @@ pub fn get_symbolic_constraints<F, A>(
 ) -> Vec<SymbolicExpression<F>>
 where
     F: Field,
-    A: Air<SymbolicAirBuilder<F>> + ?Sized,
+    A: Air<SymbolicAirBuilder<F>>,
 {
     let mut builder = SymbolicAirBuilder::new(preprocessed_width, air.width(), num_public_values);
     air.eval(&mut builder);
