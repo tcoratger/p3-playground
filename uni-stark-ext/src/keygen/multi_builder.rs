@@ -2,7 +2,6 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use super::air_builder::{AirKeygenBuilder, StarkProvingKey};
-use super::prep::VerifierPrepData;
 use super::verifying_params::StarkVerifyingParams;
 use crate::{DynamicAir, StarkGenericConfig, SymbolicExpression};
 
@@ -18,9 +17,7 @@ pub struct MultiStarkProvingKey<SC: StarkGenericConfig> {
 
 /// A verifying key for a single STARK, corresponding to a single AIR matrix.
 #[derive(Clone)]
-pub struct StarkVerifyingKey<Val, Com> {
-    /// Preprocessed verifier data (if applicable).
-    pub preprocessed_data: Option<VerifierPrepData<Com>>,
+pub struct StarkVerifyingKey<Val> {
     /// STARK verification parameters.
     pub params: StarkVerifyingParams,
     /// Symbolic constraints defining the AIR.
@@ -58,8 +55,7 @@ impl<'a, SC: StarkGenericConfig> MultiStarkKeygenBuilder<'a, SC> {
     /// Adds a single interactive AIR and returns its index.
     #[inline(always)]
     pub fn add_air(&mut self, air: Arc<dyn DynamicAir<SC>>) -> usize {
-        self.partitioned_airs
-            .push(AirKeygenBuilder::new(self.config.pcs(), air));
+        self.partitioned_airs.push(AirKeygenBuilder::new(air));
         self.partitioned_airs.len() - 1
     }
 
