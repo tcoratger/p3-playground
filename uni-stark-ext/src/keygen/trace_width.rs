@@ -17,9 +17,10 @@ pub struct TraceWidth {
 
 impl TraceWidth {
     /// Constructs `TraceWidth` from an AIR.
-    pub(crate) fn from_air<SC>(air: &dyn DynamicAir<SC>) -> Self
+    pub(crate) fn from_air<SC, A>(air: &A) -> Self
     where
         SC: StarkGenericConfig,
+        A: DynamicAir<SC>,
     {
         Self {
             cached_mains: air.cached_main_widths(),

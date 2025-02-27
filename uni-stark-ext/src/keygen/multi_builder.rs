@@ -27,16 +27,16 @@ pub struct StarkVerifyingKey<Val> {
 }
 
 /// A builder for creating MultiStark proving and verifying keys.
-pub struct MultiStarkKeygenBuilder<'a, SC: StarkGenericConfig> {
+pub struct MultiStarkKeygenBuilder<'a, SC: StarkGenericConfig, A: DynamicAir<SC>> {
     /// Reference to the STARK configuration.
     pub config: &'a SC,
     /// AIRs partitioned by constraints and trace width.
-    partitioned_airs: Vec<AirKeygenBuilder<SC>>,
+    partitioned_airs: Vec<AirKeygenBuilder<SC, A>>,
     /// The maximum constraint degree allowed across all AIRs.
     max_constraint_degree: usize,
 }
 
-impl<'a, SC: StarkGenericConfig> MultiStarkKeygenBuilder<'a, SC> {
+impl<'a, SC: StarkGenericConfig, A: DynamicAir<SC>> MultiStarkKeygenBuilder<'a, SC, A> {
     /// Creates a new builder for MultiStark proving keys.
     pub const fn new(config: &'a SC) -> Self {
         Self {
@@ -54,14 +54,14 @@ impl<'a, SC: StarkGenericConfig> MultiStarkKeygenBuilder<'a, SC> {
 
     /// Adds a single interactive AIR and returns its index.
     #[inline(always)]
-    pub fn add_air(&mut self, air: Arc<dyn DynamicAir<SC>>) -> usize {
+    pub fn add_air(&mut self, air: Arc<A>) -> usize {
         self.partitioned_airs.push(AirKeygenBuilder::new(air));
         self.partitioned_airs.len() - 1
     }
 
     /// Adds multiple AIRs at once.
     #[inline(always)]
-    pub fn add_airs(&mut self, airs: Vec<Arc<dyn DynamicAir<SC>>>) {
+    pub fn add_airs(&mut self, airs: Vec<Arc<A>>) {
         airs.into_iter().for_each(|air| {
             self.add_air(air);
         });

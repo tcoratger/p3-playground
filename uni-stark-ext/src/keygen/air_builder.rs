@@ -1,6 +1,7 @@
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::marker::PhantomData;
 
 use p3_air::{Air, BaseAir};
 
@@ -31,19 +32,30 @@ pub struct StarkProvingKey<SC: StarkGenericConfig> {
 }
 
 /// A builder for generating STARK proving and verifying keys.
-pub struct AirKeygenBuilder<SC: StarkGenericConfig> {
+pub struct AirKeygenBuilder<SC, A>
+where
+    SC: StarkGenericConfig,
+    A: DynamicAir<SC>,
+{
     /// The AIR instance associated with this builder.
-    air: Arc<dyn DynamicAir<SC>>,
+    air: Arc<A>,
     /// The width of the execution trace.
     trace_width: TraceWidth,
+    /// Marker to retain SC as a type parameter.
+    _phantom: PhantomData<SC>,
 }
 
-impl<SC: StarkGenericConfig> AirKeygenBuilder<SC> {
+impl<SC, A> AirKeygenBuilder<SC, A>
+where
+    SC: StarkGenericConfig,
+    A: DynamicAir<SC>,
+{
     /// Creates a new key generator for an AIR.
-    pub fn new(air: Arc<dyn DynamicAir<SC>>) -> Self {
+    pub fn new(air: Arc<A>) -> Self {
         Self {
             trace_width: TraceWidth::from_air(air.as_ref()),
             air,
+            _phantom: PhantomData,
         }
     }
 
@@ -58,7 +70,7 @@ impl<SC: StarkGenericConfig> AirKeygenBuilder<SC> {
     pub(crate) fn symbolic_builder(&self) -> SymbolicAirBuilder<Val<SC>> {
         let mut builder = SymbolicAirBuilder::new(
             0,
-            <dyn DynamicAir<SC> as BaseAir<Val<SC>>>::width(self.air.as_ref()),
+            <A as BaseAir<Val<SC>>>::width(self.air.as_ref()),
             self.air.num_public_values(),
         );
         Air::eval(self.air.as_ref(), &mut builder);
