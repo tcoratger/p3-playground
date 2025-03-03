@@ -7,7 +7,10 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::VerticalPair;
 
-use crate::{PackedChallenge, PackedVal, StarkGenericConfig, Val};
+use crate::{
+    Interaction, InteractionAirBuilder, InteractionType, PackedChallenge, PackedVal,
+    StarkGenericConfig, Val,
+};
 
 #[derive(Debug)]
 pub struct ProverConstraintFolder<'a, SC: StarkGenericConfig> {
@@ -82,6 +85,21 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverConstraintFold
     }
 }
 
+impl<SC: StarkGenericConfig> InteractionAirBuilder for ProverConstraintFolder<'_, SC> {
+    fn push_interaction(
+        &mut self,
+        _bus_index: usize,
+        _fields: impl IntoIterator<Item: Into<Self::Expr>>,
+        _count: impl Into<Self::Expr>,
+        _interaction_type: InteractionType,
+    ) {
+    }
+
+    fn interactions(&self) -> &[Interaction<Self::Expr>] {
+        &[]
+    }
+}
+
 impl<'a, SC: StarkGenericConfig> AirBuilder for VerifierConstraintFolder<'a, SC> {
     type F = Val<SC>;
     type Expr = SC::Challenge;
@@ -120,6 +138,21 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for VerifierConstraintFo
 
     fn public_values(&self) -> &[Self::F] {
         self.public_values
+    }
+}
+
+impl<SC: StarkGenericConfig> InteractionAirBuilder for VerifierConstraintFolder<'_, SC> {
+    fn push_interaction(
+        &mut self,
+        _bus_index: usize,
+        _fields: impl IntoIterator<Item: Into<Self::Expr>>,
+        _count: impl Into<Self::Expr>,
+        _interaction_type: InteractionType,
+    ) {
+    }
+
+    fn interactions(&self) -> &[Interaction<Self::Expr>] {
+        &[]
     }
 }
 

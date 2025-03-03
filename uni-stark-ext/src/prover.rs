@@ -20,8 +20,8 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct ProverInput<Val, A> {
-    inner: VerifierInput<Val, A>,
-    main_trace: RowMajorMatrix<Val>,
+    pub(crate) inner: VerifierInput<Val, A>,
+    pub(crate) trace: RowMajorMatrix<Val>,
 }
 
 impl<Val, A> Deref for ProverInput<Val, A> {
@@ -33,13 +33,13 @@ impl<Val, A> Deref for ProverInput<Val, A> {
 }
 
 impl<Val: Field, A> ProverInput<Val, A> {
-    pub fn new(air: A, public_values: Vec<Val>, main_trace: RowMajorMatrix<Val>) -> Self
+    pub fn new(air: A, public_values: Vec<Val>, trace: RowMajorMatrix<Val>) -> Self
     where
         A: Air<SymbolicAirBuilder<Val>>,
     {
         Self {
             inner: VerifierInput::new(air, public_values),
-            main_trace,
+            trace,
         }
     }
 }
@@ -48,8 +48,8 @@ impl<Val: Field, A> ProverInput<Val, A> {
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove<
     SC,
-    #[cfg(debug_assertions)] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
-    #[cfg(not(debug_assertions))] A,
+    #[cfg(feature = "check-constraints")] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    #[cfg(not(feature = "check-constraints"))] A,
 >(
     config: &SC,
     inputs: Vec<ProverInput<Val<SC>, A>>,
@@ -59,20 +59,14 @@ where
     SC: StarkGenericConfig,
     A: Air<SymbolicAirBuilder<Val<SC>>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
 {
-    #[cfg(debug_assertions)]
-    inputs.iter().for_each(|input| {
-        crate::check_constraints::check_constraints(
-            &input.inner.air,
-            &input.main_trace,
-            &input.inner.public_values,
-        )
-    });
+    #[cfg(feature = "check-constraints")]
+    crate::check_constraints::check_constraints(&inputs);
 
     let (inputs, main_traces, log_degrees) = inputs
         .into_iter()
         .map(|input| {
-            let log_degree = log2_strict_usize(input.main_trace.height());
-            (input.inner, input.main_trace, log_degree)
+            let log_degree = log2_strict_usize(input.trace.height());
+            (input.inner, input.trace, log_degree)
         })
         .collect::<(Vec<_>, Vec<_>, Vec<_>)>();
 

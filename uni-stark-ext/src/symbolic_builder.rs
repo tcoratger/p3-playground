@@ -1,15 +1,16 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+use itertools::Itertools;
 use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, PairBuilder};
 use p3_field::Field;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_util::log2_ceil_usize;
 use tracing::instrument;
 
-use crate::Entry;
 use crate::symbolic_expression::SymbolicExpression;
 use crate::symbolic_variable::SymbolicVariable;
+use crate::{Entry, Interaction, InteractionAirBuilder, InteractionType};
 
 #[instrument(name = "infer log of constraint degree", skip_all)]
 pub fn get_log_quotient_degree<F, A>(
@@ -70,6 +71,7 @@ pub struct SymbolicAirBuilder<F: Field> {
     main: RowMajorMatrix<SymbolicVariable<F>>,
     public_values: Vec<SymbolicVariable<F>>,
     constraints: Vec<SymbolicExpression<F>>,
+    interactions: Vec<Interaction<SymbolicExpression<F>>>,
 }
 
 impl<F: Field> SymbolicAirBuilder<F> {
@@ -95,6 +97,7 @@ impl<F: Field> SymbolicAirBuilder<F> {
             main: RowMajorMatrix::new(main_values, width),
             public_values,
             constraints: vec![],
+            interactions: vec![],
         }
     }
 
@@ -144,5 +147,26 @@ impl<F: Field> AirBuilderWithPublicValues for SymbolicAirBuilder<F> {
 impl<F: Field> PairBuilder for SymbolicAirBuilder<F> {
     fn preprocessed(&self) -> Self::M {
         self.preprocessed.clone()
+    }
+}
+
+impl<F: Field> InteractionAirBuilder for SymbolicAirBuilder<F> {
+    fn push_interaction(
+        &mut self,
+        bus_index: usize,
+        fields: impl IntoIterator<Item: Into<Self::Expr>>,
+        count: impl Into<Self::Expr>,
+        interaction_type: InteractionType,
+    ) {
+        self.interactions.push(Interaction {
+            fields: fields.into_iter().map_into().collect(),
+            count: count.into(),
+            bus_index,
+            interaction_type,
+        })
+    }
+
+    fn interactions(&self) -> &[Interaction<Self::Expr>] {
+        &self.interactions
     }
 }
