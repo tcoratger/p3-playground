@@ -1,5 +1,6 @@
 use alloc::vec;
 use alloc::vec::Vec;
+use core::mem;
 
 use itertools::{Itertools, izip};
 use p3_air::Air;
@@ -13,8 +14,8 @@ use tracing::instrument;
 
 use crate::symbolic_builder::SymbolicAirBuilder;
 use crate::{
-    PcsError, Proof, StarkGenericConfig, SymbolicExpression, Val, VerifierConstraintFolder,
-    get_symbolic_constraints,
+    PcsError, Proof, StarkGenericConfig, Val, VerifierConstraintFolder, eval_log_up,
+    get_symbolic_constraints, interaction_chunks, max_degree,
 };
 
 #[derive(Clone, Debug)]
@@ -23,6 +24,10 @@ pub struct VerifierInput<Val, A> {
     pub(crate) public_values: Vec<Val>,
     pub(crate) log_quotient_degree: usize,
     pub(crate) constraint_count: usize,
+    pub(crate) interaction_count: usize,
+    pub(crate) interaction_chunks: Vec<Vec<usize>>,
+    pub(crate) max_bus_index: usize,
+    pub(crate) max_field_count: usize,
 }
 
 impl<Val: Field, A> VerifierInput<Val, A> {
@@ -30,17 +35,26 @@ impl<Val: Field, A> VerifierInput<Val, A> {
     where
         A: Air<SymbolicAirBuilder<Val>>,
     {
-        let constraints = get_symbolic_constraints::<Val, A>(&air, 0, public_values.len());
-        let constraint_degree =
-            itertools::max(constraints.iter().map(SymbolicExpression::degree_multiple))
-                .unwrap_or_default();
+        let (constraints, interactions) =
+            get_symbolic_constraints::<Val, A>(&air, 0, public_values.len());
+        let constraint_degree = max_degree(&constraints);
         let log_quotient_degree = log2_ceil_usize(constraint_degree.saturating_sub(1));
-        let constraint_count = constraints.len();
+        let interaction_chunks = interaction_chunks((1 << log_quotient_degree) + 1, &interactions);
+        let constraint_count = constraints.len() + interaction_chunks.len() + 3;
+        let interaction_count = interactions.len();
+        let max_bus_index =
+            itertools::max(interactions.iter().map(|i| i.bus_index)).unwrap_or_default();
+        let max_field_count =
+            itertools::max(interactions.iter().map(|i| i.fields.len())).unwrap_or_default();
         Self {
             air,
             public_values,
             log_quotient_degree,
             constraint_count,
+            interaction_count,
+            interaction_chunks,
+            max_bus_index,
+            max_field_count,
         }
     }
 
@@ -62,6 +76,7 @@ where
 {
     let Proof {
         commitments,
+        log_up_sums,
         opened_values,
         opening_proof,
         log_degrees,
@@ -71,6 +86,12 @@ where
         && izip!(&inputs, opened_values).all(|(input, opened_values)| {
             opened_values.main_local.len() == input.air.width()
                 && opened_values.main_next.len() == input.air.width()
+                && opened_values.log_up_local.len()
+                    == <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION
+                        * (input.interaction_chunks.len() + 1)
+                && opened_values.log_up_next.len()
+                    == <SC::Challenge as BasedVectorSpace<Val<SC>>>::DIMENSION
+                        * (input.interaction_chunks.len() + 1)
                 && opened_values.quotient_chunks.len() == input.quotient_degree()
                 && opened_values
                     .quotient_chunks
@@ -107,6 +128,20 @@ where
     inputs
         .iter()
         .for_each(|input| challenger.observe_slice(&input.public_values));
+
+    let beta: SC::Challenge = challenger.sample_algebra_element();
+    let gamma: SC::Challenge = challenger.sample_algebra_element();
+
+    if log_up_sums.iter().copied().sum::<SC::Challenge>() != SC::Challenge::ZERO {
+        return Err(VerificationError::InvalidLogUpSum);
+    }
+
+    log_up_sums
+        .iter()
+        .for_each(|sum| challenger.observe_algebra_element(*sum));
+
+    challenger.observe(commitments.log_up_chunks.clone());
+
     let alpha: SC::Challenge = challenger.sample_algebra_element();
 
     challenger.observe(commitments.quotient_chunks.clone());
@@ -131,6 +166,21 @@ where
                     .collect(),
             ),
             (
+                commitments.log_up_chunks.clone(),
+                izip!(&main_domains, opened_values)
+                    .map(|(main_domain, opened_values)| {
+                        let zeta_next = main_domain.next_point(zeta).unwrap();
+                        (
+                            *main_domain,
+                            vec![
+                                (zeta, opened_values.log_up_local.clone()),
+                                (zeta_next, opened_values.log_up_next.clone()),
+                            ],
+                        )
+                    })
+                    .collect(),
+            ),
+            (
                 commitments.quotient_chunks.clone(),
                 izip!(&quotient_chunks_domains, opened_values)
                     .flat_map(|(quotient_chunks_domains, opened_values)| {
@@ -145,14 +195,22 @@ where
     )
     .map_err(VerificationError::InvalidOpeningArgument)?;
 
+    let max_bus_index =
+        itertools::max(inputs.iter().map(|input| input.max_bus_index)).unwrap_or_default();
+    let max_field_count =
+        itertools::max(inputs.iter().map(|input| input.max_field_count)).unwrap_or_default();
+    let beta_powers = beta.powers().skip(1).take(max_field_count).collect_vec();
+    let gamma_powers = gamma.powers().skip(1).take(max_bus_index + 1).collect_vec();
+
     izip!(
         &inputs,
         main_domains,
         quotient_chunks_domains,
-        opened_values
+        log_up_sums,
+        opened_values,
     )
     .try_for_each(
-        |(input, main_domain, quotient_chunks_domains, opened_values)| {
+        |(input, main_domain, quotient_chunks_domains, log_up_sum, opened_values)| {
             let zps = quotient_chunks_domains
                 .iter()
                 .enumerate()
@@ -170,6 +228,19 @@ where
                         .product::<SC::Challenge>()
                 })
                 .collect_vec();
+
+            let [log_up_local, log_up_next] =
+                [&opened_values.log_up_local, &opened_values.log_up_next].map(|values| {
+                    values
+                        .chunks(SC::Challenge::DIMENSION)
+                        .map(|ch| {
+                            ch.iter()
+                                .enumerate()
+                                .map(|(e_i, &c)| SC::Challenge::ith_basis_element(e_i) * c)
+                                .sum::<SC::Challenge>()
+                        })
+                        .collect_vec()
+                });
 
             let quotient = opened_values
                 .quotient_chunks
@@ -199,8 +270,26 @@ where
                 is_transition: sels.is_transition,
                 alpha,
                 accumulator: SC::Challenge::ZERO,
+                beta_powers: &beta_powers,
+                gamma_powers: &gamma_powers,
+                numers: vec![Default::default(); input.interaction_count],
+                denoms: vec![Default::default(); input.interaction_count],
+                interaction_index: 0,
             };
             input.air.eval(&mut folder);
+
+            let numers = mem::take(&mut folder.numers);
+            let denoms = mem::take(&mut folder.denoms);
+            eval_log_up(
+                &mut folder,
+                &numers,
+                &denoms,
+                &log_up_local,
+                &log_up_next,
+                &input.interaction_chunks,
+                *log_up_sum,
+            );
+
             let folded_constraints = folder.accumulator;
 
             // Finally, check that
@@ -217,6 +306,7 @@ where
 #[derive(Debug)]
 pub enum VerificationError<PcsErr> {
     InvalidProofShape,
+    InvalidLogUpSum,
     /// An error occurred while verifying the claimed openings.
     InvalidOpeningArgument(PcsErr),
     /// Out-of-domain evaluation mismatch, i.e. `constraints(zeta)` did not match

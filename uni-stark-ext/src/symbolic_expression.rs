@@ -58,6 +58,17 @@ impl<F> SymbolicExpression<F> {
             } => *degree_multiple,
         }
     }
+
+    pub fn has_selector(&self) -> bool {
+        match self {
+            Self::Variable(_) | Self::Constant(_) => false,
+            Self::IsFirstRow | Self::IsLastRow | Self::IsTransition => true,
+            Self::Neg { x, .. } => x.has_selector(),
+            Self::Add { x, y, .. } | Self::Sub { x, y, .. } | Self::Mul { x, y, .. } => {
+                x.has_selector() || y.has_selector()
+            }
+        }
+    }
 }
 
 impl<F: Field> Default for SymbolicExpression<F> {

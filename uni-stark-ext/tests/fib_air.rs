@@ -12,7 +12,9 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-use p3_uni_stark_ext::{ProverInput, StarkConfig, VerifierInput, prove, verify};
+use p3_uni_stark_ext::{
+    InteractionAirBuilder, ProverInput, StarkConfig, VerifierInput, prove, verify,
+};
 use rand::rng;
 
 /// For testing the public values feature
@@ -24,33 +26,37 @@ impl<F> BaseAir<F> for FibonacciAir {
     }
 }
 
-impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {
+impl<AB: AirBuilderWithPublicValues + InteractionAirBuilder> Air<AB> for FibonacciAir {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
         let pis = builder.public_values();
 
-        let a = pis[0];
-        let b = pis[1];
-        let x = pis[2];
+        if !AB::ONLY_INTERACTION {
+            let a = pis[0];
+            let b = pis[1];
+            let x = pis[2];
 
-        let (local, next) = (main.row_slice(0), main.row_slice(1));
-        let local: &FibonacciRow<AB::Var> = (*local).borrow();
-        let next: &FibonacciRow<AB::Var> = (*next).borrow();
+            let (local, next) = (main.row_slice(0), main.row_slice(1));
+            let local: &FibonacciRow<AB::Var> = (*local).borrow();
+            let next: &FibonacciRow<AB::Var> = (*next).borrow();
 
-        let mut when_first_row = builder.when_first_row();
+            let mut when_first_row = builder.when_first_row();
 
-        when_first_row.assert_eq(local.left, a);
-        when_first_row.assert_eq(local.right, b);
+            when_first_row.assert_eq(local.left, a);
+            when_first_row.assert_eq(local.right, b);
 
-        let mut when_transition = builder.when_transition();
+            let mut when_transition = builder.when_transition();
 
-        // a' <- b
-        when_transition.assert_eq(local.right, next.left);
+            // a' <- b
+            when_transition.assert_eq(local.right, next.left);
 
-        // b' <- a + b
-        when_transition.assert_eq(local.left + local.right, next.right);
+            // b' <- a + b
+            when_transition.assert_eq(local.left + local.right, next.right);
 
-        builder.when_last_row().assert_eq(local.right, x);
+            builder.when_last_row().assert_eq(local.right, x);
+        }
+
+        builder.push_send(0, [AB::Expr::ZERO], AB::Expr::ZERO);
     }
 }
 

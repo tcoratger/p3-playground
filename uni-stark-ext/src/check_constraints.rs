@@ -11,7 +11,7 @@ use p3_matrix::dense::RowMajorMatrixView;
 use p3_matrix::stack::VerticalPair;
 use tracing::instrument;
 
-use crate::{Interaction, InteractionAirBuilder, InteractionType, ProverInput};
+use crate::{InteractionAirBuilder, InteractionType, ProverInput};
 
 #[instrument(name = "check constraints", skip_all)]
 pub(crate) fn check_constraints<F, A>(prover_inputs: &[ProverInput<F, A>])
@@ -159,6 +159,8 @@ impl<F: Field> AirBuilderWithPublicValues for DebugConstraintBuilder<'_, F> {
 }
 
 impl<F: Field> InteractionAirBuilder for DebugConstraintBuilder<'_, F> {
+    const ONLY_INTERACTION: bool = false;
+
     fn push_interaction(
         &mut self,
         bus_index: usize,
@@ -172,9 +174,5 @@ impl<F: Field> InteractionAirBuilder for DebugConstraintBuilder<'_, F> {
             .entry(fields.into_iter().map_into().collect())
             .or_default()
             .push((self.air_index, interaction_type, count.into()));
-    }
-
-    fn interactions(&self) -> &[Interaction<Self::Expr>] {
-        unreachable!()
     }
 }

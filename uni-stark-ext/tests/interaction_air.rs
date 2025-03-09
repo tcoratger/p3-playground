@@ -28,7 +28,9 @@ impl<AB: InteractionAirBuilder> Air<AB> for SendingAir {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
         let local = main.row_slice(0);
-        builder.assert_eq(local[0].into().square(), local[0].into().square());
+        if !AB::ONLY_INTERACTION {
+            builder.assert_eq(local[0].into().square(), local[0].into().square());
+        }
         builder.push_send(0, [local[0]], AB::Expr::ONE);
     }
 }
@@ -45,7 +47,9 @@ impl<AB: InteractionAirBuilder> Air<AB> for ReceivingAir {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
         let local = main.row_slice(0);
-        builder.assert_eq(local[0].into().square(), local[0].into().square());
+        if !AB::ONLY_INTERACTION {
+            builder.assert_eq(local[0].into().square(), local[0].into().square());
+        }
         builder.push_receive(0, [local[0]], local[1]);
     }
 }
@@ -83,10 +87,11 @@ fn generate_sending_trace<F: Field>(n: usize, mut rng: impl Rng) -> RowMajorMatr
 }
 
 fn generate_receiving_trace<F: Field>(sending_trace: &RowMajorMatrix<F>) -> RowMajorMatrix<F> {
-    let mut trace = RowMajorMatrix::new(F::zero_vec(2 * sending_trace.height()), 2);
+    let counts = sending_trace.values.iter().counts();
+    let mut trace = RowMajorMatrix::new(F::zero_vec(2 * counts.len().next_power_of_two()), 2);
     trace
         .rows_mut()
-        .zip(sending_trace.values.iter().counts())
+        .zip(counts)
         .for_each(|(row, (value, mult))| {
             row[0] = *value;
             row[1] = F::from_usize(mult);
