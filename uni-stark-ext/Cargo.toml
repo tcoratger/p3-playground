@@ -5,6 +5,7 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
+hashbrown = { workspace = true, features = ["default-hasher"], optional = true }
 itertools.workspace = true
 p3-air.workspace = true
 p3-challenger.workspace = true
@@ -33,5 +34,6 @@ postcard = { workspace = true, features = ["alloc"] }
 rand.workspace = true
 
 [features]
+check-constraints = ["dep:hashbrown"]
 nightly-features = ["p3-baby-bear/nightly-features", "p3-mersenne-31/nightly-features"]
 parallel = ["p3-maybe-rayon/parallel"]

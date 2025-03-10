@@ -150,8 +150,8 @@ fn test_public_value() {
     test_public_value_impl(1 << 3, 21);
 }
 
-#[cfg(debug_assertions)]
 #[test]
+#[cfg(feature = "check-constraints")]
 #[should_panic(expected = "assertion `left == right` failed: constraints had nonzero value")]
 fn test_incorrect_public_value() {
     let perm = Perm::new_from_rng_128(&mut rng());
