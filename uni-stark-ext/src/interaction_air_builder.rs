@@ -32,6 +32,7 @@ pub trait InteractionAirBuilder: AirBuilder {
         interaction_type: InteractionType,
     );
 
+    #[inline]
     fn push_send(
         &mut self,
         bus_index: usize,
@@ -41,6 +42,7 @@ pub trait InteractionAirBuilder: AirBuilder {
         self.push_interaction(bus_index, fields, count, InteractionType::Send);
     }
 
+    #[inline]
     fn push_receive(
         &mut self,
         bus_index: usize,
@@ -90,9 +92,7 @@ impl<'a, SC: StarkGenericConfig> AirBuilder for ProverInteractionFolder<'a, SC> 
     }
 
     #[inline]
-    fn assert_zero<I: Into<Self::Expr>>(&mut self, _: I) {
-        unimplemented!()
-    }
+    fn assert_zero<I: Into<Self::Expr>>(&mut self, _: I) {}
 }
 
 impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverInteractionFolder<'_, SC> {
@@ -107,6 +107,7 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverInteractionFol
 impl<SC: StarkGenericConfig> InteractionAirBuilder for ProverInteractionFolder<'_, SC> {
     const ONLY_INTERACTION: bool = true;
 
+    #[inline]
     fn push_interaction(
         &mut self,
         bus_index: usize,
@@ -131,6 +132,7 @@ impl<SC: StarkGenericConfig> InteractionAirBuilder for ProverInteractionFolder<'
     }
 }
 
+#[inline]
 pub(crate) fn eval_log_up<AB: ExtensionBuilder>(
     builder: &mut AB,
     numers: &[AB::Expr],
