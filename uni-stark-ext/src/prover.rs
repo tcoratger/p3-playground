@@ -171,6 +171,16 @@ where
     let max_constraint_count = pk.max_constraint_count();
     let mut alpha_powers = alpha.powers().take(max_constraint_count).collect_vec();
     alpha_powers.reverse();
+    let decomposed_alpha_powers = (0..SC::Challenge::DIMENSION)
+        .into_par_iter()
+        .map(|i| {
+            alpha_powers
+                .par_iter()
+                .map(|x| x.as_basis_coefficients_slice()[i])
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
     let beta_powers = beta_powers.into_iter().map_into().collect_vec();
     let gamma_powers = gamma_powers.into_iter().map_into().collect_vec();
 
@@ -203,6 +213,12 @@ where
                     main_trace_on_quotient_domain,
                     log_up_trace_on_quotient_domain,
                     &alpha_powers[max_constraint_count - pk.constraint_count..],
+                    &decomposed_alpha_powers
+                        .iter()
+                        .map(|decomposed_alpha_powers| {
+                            &decomposed_alpha_powers[max_constraint_count - pk.constraint_count..]
+                        })
+                        .collect_vec(),
                     &beta_powers,
                     &gamma_powers,
                     log_up_sum.unwrap_or_default().into(),
@@ -413,6 +429,7 @@ fn quotient_values<SC, A, Mat>(
     main_trace_on_quotient_domain: Mat,
     log_up_trace_on_quotient_domain: Option<Mat>,
     alpha_powers: &[SC::Challenge],
+    decomposed_alpha_powers: &[&[Val<SC>]],
     beta_powers: &[PackedChallenge<SC>],
     gamma_powers: &[PackedChallenge<SC>],
     log_up_sum: PackedChallenge<SC>,
@@ -463,6 +480,7 @@ where
                 is_last_row,
                 is_transition,
                 alpha_powers,
+                decomposed_alpha_powers,
                 accumulator,
                 constraint_index: 0,
                 beta_powers,
