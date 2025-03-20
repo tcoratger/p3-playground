@@ -40,8 +40,10 @@ impl<Val, Dft, InputMmcs, FriMmcs, Digest>
 ))]
 pub struct FriProofSharedCap<F: Field, M: Mmcs<F>, Witness, InputProof, Digest> {
     inner: FriProof<F, M, Witness, InputProof>,
-    shared_digest_set: Vec<Digest>,
-    shared_digest_indices: Vec<[Vec<Vec<u16>>; 2]>,
+    input_shared_digest_set: Vec<Digest>,
+    input_shared_digest_indices: Vec<Vec<Vec<u16>>>,
+    commit_phase_shared_digest_set: Vec<Digest>,
+    commit_phase_shared_digest_indices: Vec<Vec<Vec<u16>>>,
 }
 
 impl<Val, Dft, InputMmcs, FriMmcs, Challenge, Challenger, Digest> Pcs<Challenge, Challenger>
@@ -105,11 +107,11 @@ where
             Pcs::<Challenge, Challenger>::open(&self.inner, rounds, challenger);
 
         let shared_cap = self.shared_cap;
-        let shared_digests = proof
+        let (input_shared_digests, commit_phase_shared_digests) = proof
             .query_proofs
             .par_iter_mut()
             .map(|query_proof| {
-                [
+                (
                     query_proof
                         .input_proof
                         .par_iter_mut()
@@ -126,43 +128,52 @@ where
                             opening.opening_proof.drain(start..).collect::<Vec<_>>()
                         })
                         .collect::<Vec<_>>(),
-                ]
+                )
             })
-            .collect::<Vec<_>>();
-        let shared_digest_set = Vec::from_iter(
-            shared_digests
-                .par_iter()
-                .flatten()
-                .flatten()
-                .flatten()
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .cloned(),
-        );
-        let shared_digest_indices = {
-            let map = shared_digest_set
-                .par_iter()
-                .enumerate()
-                .map(|(v, k)| (k, v as u16))
-                .collect::<BTreeMap<_, _>>();
-            shared_digests
-                .into_par_iter()
-                .map(|v| {
-                    v.map(|v| {
+            .collect::<(Vec<_>, Vec<_>)>();
+        let index = |shared_digests: Vec<Vec<Vec<_>>>| {
+            let shared_digest_set = Vec::from_iter(
+                shared_digests
+                    .par_iter()
+                    .flatten()
+                    .flatten()
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .cloned(),
+            );
+            let shared_digest_indices = {
+                let map = shared_digest_set
+                    .par_iter()
+                    .enumerate()
+                    .map(|(v, k)| (k, v as u16))
+                    .collect::<BTreeMap<_, _>>();
+                shared_digests
+                    .into_par_iter()
+                    .map(|v| {
                         v.into_par_iter()
                             .map(|v| v.into_par_iter().map(|v| map[&&v]).collect::<Vec<_>>())
                             .collect::<Vec<_>>()
                     })
-                })
-                .collect::<Vec<_>>()
+                    .collect::<Vec<_>>()
+            };
+            (shared_digest_set, shared_digest_indices)
         };
+        let (
+            (input_shared_digest_set, input_shared_digest_indices),
+            (commit_phase_shared_digest_set, commit_phase_shared_digest_indices),
+        ) = join(
+            || index(input_shared_digests),
+            || index(commit_phase_shared_digests),
+        );
 
         (
             opened_values,
             FriProofSharedCap {
                 inner: proof,
-                shared_digest_set,
-                shared_digest_indices,
+                input_shared_digest_set,
+                input_shared_digest_indices,
+                commit_phase_shared_digest_set,
+                commit_phase_shared_digest_indices,
             },
         )
     }
@@ -179,36 +190,41 @@ where
     ) -> Result<(), Self::Error> {
         let FriProofSharedCap {
             inner: proof,
-            shared_digest_set,
-            shared_digest_indices,
+            input_shared_digest_set,
+            input_shared_digest_indices,
+            commit_phase_shared_digest_set,
+            commit_phase_shared_digest_indices,
         } = proof;
         let mut proof = proof.clone();
+
+        // TODO: Check indices have expected length and all index is in valid range.
 
         proof
             .query_proofs
             .par_iter_mut()
-            .zip(shared_digest_indices)
-            .for_each(|(query_proof, indices)| {
+            .zip(input_shared_digest_indices)
+            .zip(commit_phase_shared_digest_indices)
+            .for_each(|((query_proof, input_indices), commit_phase_indices)| {
                 query_proof
                     .input_proof
                     .par_iter_mut()
-                    .zip(&indices[0])
+                    .zip(input_indices)
                     .for_each(|(opening, indices)| {
                         opening.opening_proof.extend(
                             indices
                                 .iter()
-                                .map(|idx| shared_digest_set[*idx as usize].clone()),
+                                .map(|idx| input_shared_digest_set[*idx as usize].clone()),
                         );
                     });
                 query_proof
                     .commit_phase_openings
                     .par_iter_mut()
-                    .zip(&indices[1])
+                    .zip(commit_phase_indices)
                     .for_each(|(opening, indices)| {
                         opening.opening_proof.extend(
                             indices
                                 .iter()
-                                .map(|idx| shared_digest_set[*idx as usize].clone()),
+                                .map(|idx| commit_phase_shared_digest_set[*idx as usize].clone()),
                         );
                     });
             });
