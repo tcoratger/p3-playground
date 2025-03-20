@@ -39,11 +39,11 @@ impl<Val, Dft, InputMmcs, FriMmcs, Digest>
     deserialize = "Witness: Deserialize<'de>, InputProof: Deserialize<'de>, Digest: Deserialize<'de>"
 ))]
 pub struct FriProofSharedCap<F: Field, M: Mmcs<F>, Witness, InputProof, Digest> {
-    inner: FriProof<F, M, Witness, InputProof>,
-    input_shared_digest_set: Vec<Digest>,
-    input_shared_digest_indices: Vec<Vec<Vec<u16>>>,
-    commit_phase_shared_digest_set: Vec<Digest>,
-    commit_phase_shared_digest_indices: Vec<Vec<Vec<u16>>>,
+    pub inner: FriProof<F, M, Witness, InputProof>,
+    pub input_shared_digest_set: Vec<Digest>,
+    pub input_shared_digest_indices: Vec<Vec<Vec<u16>>>,
+    pub commit_phase_shared_digest_set: Vec<Digest>,
+    pub commit_phase_shared_digest_indices: Vec<Vec<Vec<u16>>>,
 }
 
 impl<Val, Dft, InputMmcs, FriMmcs, Challenge, Challenger, Digest> Pcs<Challenge, Challenger>
