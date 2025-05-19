@@ -2,74 +2,28 @@ use alloc::vec::Vec;
 
 use itertools::{Itertools, izip};
 use p3_air::{AirBuilder, AirBuilderWithPublicValues, ExtensionBuilder};
-use p3_matrix::dense::RowMajorMatrixView;
-use p3_matrix::stack::VerticalPair;
+use p3_air_ext::{InteractionAirBuilder, InteractionType, ViewPair};
+use p3_field::{ExtensionField, Field};
 
-use crate::{StarkGenericConfig, Val};
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum InteractionType {
-    Send,
-    Receive,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Interaction<Expr> {
-    pub fields: Vec<Expr>,
-    pub count: Expr,
-    pub bus_index: usize,
-    pub interaction_type: InteractionType,
-}
-
-pub trait InteractionAirBuilder: AirBuilder {
-    const ONLY_INTERACTION: bool;
-
-    fn push_interaction(
-        &mut self,
-        bus_index: usize,
-        fields: impl IntoIterator<Item: Into<Self::Expr>>,
-        count: impl Into<Self::Expr>,
-        interaction_type: InteractionType,
-    );
-
-    #[inline]
-    fn push_send(
-        &mut self,
-        bus_index: usize,
-        fields: impl IntoIterator<Item: Into<Self::Expr>>,
-        count: impl Into<Self::Expr>,
-    ) {
-        self.push_interaction(bus_index, fields, count, InteractionType::Send);
-    }
-
-    #[inline]
-    fn push_receive(
-        &mut self,
-        bus_index: usize,
-        fields: impl IntoIterator<Item: Into<Self::Expr>>,
-        count: impl Into<Self::Expr>,
-    ) {
-        self.push_interaction(bus_index, fields, count, InteractionType::Receive);
-    }
-}
-
-type ViewPair<'a, T> = VerticalPair<RowMajorMatrixView<'a, T>, RowMajorMatrixView<'a, T>>;
-
-pub struct ProverInteractionFolder<'a, SC: StarkGenericConfig> {
-    pub main: ViewPair<'a, Val<SC>>,
-    pub public_values: &'a Vec<Val<SC>>,
-    pub beta_powers: &'a [SC::Challenge],
-    pub gamma_powers: &'a [SC::Challenge],
-    pub numers: &'a mut [Val<SC>],
-    pub denoms: &'a mut [SC::Challenge],
+pub struct ProverInteractionFolder<'a, Val, Challenge> {
+    pub main: ViewPair<'a, Val>,
+    pub public_values: &'a Vec<Val>,
+    pub beta_powers: &'a [Challenge],
+    pub gamma_powers: &'a [Challenge],
+    pub numers: &'a mut [Val],
+    pub denoms: &'a mut [Challenge],
     pub interaction_index: usize,
 }
 
-impl<'a, SC: StarkGenericConfig> AirBuilder for ProverInteractionFolder<'a, SC> {
-    type F = Val<SC>;
-    type Expr = Val<SC>;
-    type Var = Val<SC>;
-    type M = ViewPair<'a, Val<SC>>;
+impl<'a, Val, Challenge> AirBuilder for ProverInteractionFolder<'a, Val, Challenge>
+where
+    Val: Field,
+    Challenge: ExtensionField<Val>,
+{
+    type F = Val;
+    type Expr = Val;
+    type Var = Val;
+    type M = ViewPair<'a, Val>;
 
     #[inline]
     fn main(&self) -> Self::M {
@@ -95,7 +49,11 @@ impl<'a, SC: StarkGenericConfig> AirBuilder for ProverInteractionFolder<'a, SC> 
     fn assert_zero<I: Into<Self::Expr>>(&mut self, _: I) {}
 }
 
-impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverInteractionFolder<'_, SC> {
+impl<Val, Challenge> AirBuilderWithPublicValues for ProverInteractionFolder<'_, Val, Challenge>
+where
+    Val: Field,
+    Challenge: ExtensionField<Val>,
+{
     type PublicVar = Self::F;
 
     #[inline]
@@ -104,7 +62,11 @@ impl<SC: StarkGenericConfig> AirBuilderWithPublicValues for ProverInteractionFol
     }
 }
 
-impl<SC: StarkGenericConfig> InteractionAirBuilder for ProverInteractionFolder<'_, SC> {
+impl<Val, Challenge> InteractionAirBuilder for ProverInteractionFolder<'_, Val, Challenge>
+where
+    Val: Field,
+    Challenge: ExtensionField<Val>,
+{
     const ONLY_INTERACTION: bool = true;
 
     #[inline]

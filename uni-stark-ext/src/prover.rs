@@ -1,14 +1,13 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
-use core::ops::Deref;
 
 use itertools::{Itertools, chain, izip};
-use p3_air::{Air, BaseAirWithPublicValues};
+use p3_air::Air;
 use p3_challenger::{CanObserve, CanSample, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{
-    BasedVectorSpace, Field, PackedValue, PrimeCharacteristicRing, batch_multiplicative_inverse,
+    BasedVectorSpace, PackedValue, PrimeCharacteristicRing, batch_multiplicative_inverse,
 };
 use p3_matrix::Matrix;
 use p3_matrix::dense::{RowMajorMatrix, RowMajorMatrixView};
@@ -19,66 +18,40 @@ use tracing::{debug_span, info_span, instrument};
 
 use crate::{
     Commitments, Domain, OpenedValues, PackedChallenge, PackedVal, Proof, ProofPerAir,
-    ProverConstraintFolder, ProverInteractionFolder, ProvingKey, StarkGenericConfig, Val,
-    VerifierInput, eval_log_up,
+    ProverConstraintFolder, ProverInput, ProverInteractionFolder, ProvingKey, StarkGenericConfig,
+    Val, eval_log_up,
 };
-
-#[derive(Clone, Debug)]
-pub struct ProverInput<Val, A> {
-    pub(crate) inner: VerifierInput<Val, A>,
-    pub(crate) trace: RowMajorMatrix<Val>,
-}
-
-impl<Val, A> Deref for ProverInput<Val, A> {
-    type Target = VerifierInput<Val, A>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl<Val: Field, A> ProverInput<Val, A> {
-    pub fn new(air: A, public_values: Vec<Val>, trace: RowMajorMatrix<Val>) -> Self
-    where
-        A: BaseAirWithPublicValues<Val>,
-    {
-        Self {
-            inner: VerifierInput::new(air, public_values),
-            trace,
-        }
-    }
-}
 
 #[instrument(skip_all)]
 #[allow(clippy::multiple_bound_locations)] // cfg not supported in where clauses?
 pub fn prove<
     SC,
-    #[cfg(feature = "check-constraints")] A: for<'a> Air<crate::check_constraints::DebugConstraintBuilder<'a, Val<SC>>>,
+    #[cfg(feature = "check-constraints")] A: for<'a> Air<crate::DebugConstraintBuilder<'a, Val<SC>>>,
     #[cfg(not(feature = "check-constraints"))] A,
 >(
     config: &SC,
     pk: &ProvingKey,
     inputs: Vec<ProverInput<Val<SC>, A>>,
-    challenger: &mut SC::Challenger,
 ) -> Proof<SC>
 where
     SC: StarkGenericConfig,
-    A: for<'a> Air<ProverInteractionFolder<'a, SC>> + for<'a> Air<ProverConstraintFolder<'a, SC>>,
+    A: for<'a> Air<ProverInteractionFolder<'a, Val<SC>, SC::Challenge>>
+        + for<'a> Air<ProverConstraintFolder<'a, SC>>,
 {
     #[cfg(feature = "check-constraints")]
-    crate::check_constraints::check_constraints(&inputs);
+    crate::check_constraints(&inputs);
 
-    let (inputs, main_traces, log_degrees) = inputs
-        .into_iter()
-        .map(|input| {
-            let log_degree = log2_strict_usize(input.trace.height());
-            (input.inner, input.trace, log_degree)
-        })
-        .collect::<(Vec<_>, Vec<_>, Vec<_>)>();
+    let (inputs, main_traces) = inputs.into_iter().map_into().collect::<(Vec<_>, Vec<_>)>();
+    let log_degrees = main_traces
+        .iter()
+        .map(|trace| log2_strict_usize(trace.height()))
+        .collect_vec();
 
     let has_any_interaction = pk.has_any_interaction();
 
     let pcs = config.pcs();
+    let mut challenger = config.initialise_challenger();
+
     let (main_domains, quotient_domains) = izip!(pk.per_air(), &log_degrees)
         .map(|(pk, log_degree)| {
             let main_domain = pcs.natural_domain_for_degree(1 << log_degree);
@@ -88,9 +61,8 @@ where
         })
         .collect::<(Vec<_>, Vec<_>)>();
 
-    let (main_commit, main_data) = info_span!("commit to main data").in_scope(|| {
-        pcs.commit(izip!(main_domains.iter().copied(), main_traces.clone()).collect())
-    });
+    let (main_commit, main_data) = info_span!("commit to main data")
+        .in_scope(|| pcs.commit(izip!(main_domains.iter().copied(), main_traces.clone())));
 
     // Observe the instance.
     // degree < 2^255 so we can safely cast log_degree to a u8.
@@ -122,7 +94,7 @@ where
             .map(|(pk, input, main_trace)| {
                 pk.has_interaction()
                     .then(|| {
-                        log_up_trace(
+                        log_up_trace::<SC, _>(
                             pk.interaction_count,
                             &pk.interaction_chunks,
                             &input.air,
@@ -152,11 +124,9 @@ where
         has_any_interaction
             .then(|| {
                 pcs.commit(
-                    izip!(&main_domains, log_up_traces)
-                        .flat_map(|(main_domain, trace)| {
-                            trace.map(|trace| (*main_domain, trace.flatten_to_base()))
-                        })
-                        .collect(),
+                    izip!(&main_domains, log_up_traces).flat_map(|(main_domain, trace)| {
+                        trace.map(|trace| (*main_domain, trace.flatten_to_base()))
+                    }),
                 )
             })
             .unzip()
@@ -228,14 +198,14 @@ where
         .collect::<Vec<_>>()
     });
 
-    let quotient_chunks = izip!(pk.per_air(), &quotient_domains, quotient_values)
-        .flat_map(|(pk, quotient_domain, quotient_values)| {
+    let quotient_chunks = izip!(pk.per_air(), &quotient_domains, quotient_values).flat_map(
+        |(pk, quotient_domain, quotient_values)| {
             let quotient_flat = RowMajorMatrix::new_col(quotient_values).flatten_to_base();
             let quotient_chunks = quotient_domain.split_evals(pk.quotient_degree(), quotient_flat);
             let qc_domains = quotient_domain.split_domains(pk.quotient_degree());
             izip!(qc_domains, quotient_chunks)
-        })
-        .collect();
+        },
+    );
 
     let (quotient_commit, quotient_data) =
         info_span!("commit to quotient poly chunks").in_scope(|| pcs.commit(quotient_chunks));
@@ -281,7 +251,7 @@ where
                 )),
             ]
             .collect(),
-            challenger,
+            &mut challenger,
         )
     });
     let mut opened_values = opened_values.into_iter();
@@ -342,7 +312,7 @@ fn log_up_trace<SC, A>(
 ) -> (SC::Challenge, RowMajorMatrix<SC::Challenge>)
 where
     SC: StarkGenericConfig,
-    A: for<'a> Air<ProverInteractionFolder<'a, SC>>,
+    A: for<'a> Air<ProverInteractionFolder<'a, Val<SC>, SC::Challenge>>,
 {
     let width = interaction_chunks.len() + 1;
     let height = main_trace.height();
@@ -368,8 +338,8 @@ where
                 .for_each(|(j, (numers, denoms))| {
                     let row_idx = i * chunk_rows + j;
 
-                    let local = main_trace.row_slice(row_idx);
-                    let next = main_trace.row_slice((row_idx + 1) % height);
+                    let local = main_trace.row_slice(row_idx).unwrap();
+                    let next = main_trace.row_slice((row_idx + 1) % height).unwrap();
                     let main = VerticalPair::new(
                         RowMajorMatrixView::new_row(&local),
                         RowMajorMatrixView::new_row(&next),
@@ -502,6 +472,7 @@ where
                                 PackedVal::<SC>::from_fn(|j| {
                                     log_up_trace_on_quotient_domain
                                         .get((row + j) % quotient_size, col + i)
+                                        .unwrap()
                                 })
                             })
                         })

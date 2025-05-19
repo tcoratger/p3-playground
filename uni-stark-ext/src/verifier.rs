@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use core::mem;
 
 use itertools::{Itertools, chain, izip};
-use p3_air::{Air, BaseAirWithPublicValues};
+use p3_air::Air;
 use p3_challenger::{CanObserve, CanSample, FieldChallenger};
 use p3_commit::{Pcs, PolynomialSpace};
 use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing};
@@ -12,39 +12,15 @@ use p3_matrix::stack::VerticalPair;
 use tracing::instrument;
 
 use crate::{
-    PcsError, Proof, StarkGenericConfig, Val, VerifierConstraintFolder, VerifyingKey, eval_log_up,
+    PcsError, Proof, StarkGenericConfig, Val, VerifierConstraintFolder, VerifierInput,
+    VerifyingKey, eval_log_up,
 };
-
-#[derive(Clone, Debug)]
-pub struct VerifierInput<Val, A> {
-    pub(crate) air: A,
-    pub(crate) public_values: Vec<Val>,
-}
-
-impl<Val: Field, A> VerifierInput<Val, A> {
-    pub fn new(air: A, public_values: Vec<Val>) -> Self
-    where
-        A: BaseAirWithPublicValues<Val>,
-    {
-        assert_eq!(air.num_public_values(), public_values.len());
-        Self { air, public_values }
-    }
-
-    pub fn air(&self) -> &A {
-        &self.air
-    }
-
-    pub fn public_values(&self) -> &[Val] {
-        &self.public_values
-    }
-}
 
 #[instrument(skip_all)]
 pub fn verify<SC, A>(
     config: &SC,
     vk: &VerifyingKey,
     inputs: Vec<VerifierInput<Val<SC>, A>>,
-    challenger: &mut SC::Challenger,
     proof: &Proof<SC>,
 ) -> Result<(), VerificationError<PcsError<SC>>>
 where
@@ -65,6 +41,8 @@ where
     }
 
     let pcs = config.pcs();
+    let mut challenger = config.initialise_challenger();
+
     let (main_domains, quotient_chunks_domains) = izip!(vk.per_air(), &proof.per_air)
         .map(|(vk, proof)| {
             let main_domain = pcs.natural_domain_for_degree(1 << proof.log_degree);
@@ -170,7 +148,7 @@ where
         ]
         .collect(),
         opening_proof,
-        challenger,
+        &mut challenger,
     )
     .map_err(VerificationError::InvalidOpeningArgument)?;
 
@@ -220,7 +198,7 @@ where
                 zps[ch_i]
                     * ch.iter()
                         .enumerate()
-                        .map(|(e_i, &c)| SC::Challenge::ith_basis_element(e_i) * c)
+                        .map(|(e_i, &c)| SC::Challenge::ith_basis_element(e_i).unwrap() * c)
                         .sum::<SC::Challenge>()
             })
             .sum::<SC::Challenge>();
@@ -261,7 +239,7 @@ where
                     .map(|ch| {
                         ch.iter()
                             .enumerate()
-                            .map(|(e_i, &c)| SC::Challenge::ith_basis_element(e_i) * c)
+                            .map(|(e_i, &c)| SC::Challenge::ith_basis_element(e_i).unwrap() * c)
                             .sum::<SC::Challenge>()
                     })
                     .collect_vec()
