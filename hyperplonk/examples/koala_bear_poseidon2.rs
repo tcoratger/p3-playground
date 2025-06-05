@@ -16,7 +16,8 @@ use tracing_forest::ForestLayer;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, Registry};
 
-#[cfg_attr(target_family = "unix", global_allocator)]
+#[cfg(target_family = "unix")]
+#[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 type Val = KoalaBear;
@@ -82,6 +83,7 @@ fn main() {
             merkle_compress: compress,
             soundness_type: SecurityAssumption::CapacityBound,
             starting_log_inv_rate: 1,
+            rs_domain_initial_reduction_factor: 3,
         };
         HyperPlonkConfig::<_, Challenge, _>::new(
             Pcs::new(dft, whir_params),
